@@ -398,7 +398,15 @@ namespace DriverSparkplugB
 
 			// subscribe to the topic (namespace / group) with wildcard and QoS 2 MqttMsgBase.QOS_LEVEL_EXACTLY_ONCE
 			// Can we do this to the local broker to ensure safe delivery?
-			string topic = this.DBChannel.NamespaceName + "/" + this.DBChannel.GroupId + "/#";
+			string topic;
+            if (!string.IsNullOrEmpty(this.DBChannel.GroupId))
+			{
+				topic = this.DBChannel.NamespaceName + "/" + this.DBChannel.GroupId + "/#";
+			}
+            else
+            {
+                topic = this.DBChannel.NamespaceName + "/#";
+            }
             ushort s = client.Subscribe(new string[] { topic }, new byte[] { c.SubQoS });
             LogAndEvent("Subscribed to: " + topic + " - with QoS: " + c.SubQoS.ToString());
             errorText = "";
@@ -440,8 +448,8 @@ namespace DriverSparkplugB
             LogAndEvent("RX Message bytes: " + e.Message.Count() );
 
 			// Find the point entry with this topic
-			string Namespace = "", GroupId = "", Command = "", Node = "", Device = "";
-            DecodeTopic( t, ref Namespace, ref GroupId, ref Command, ref Node, ref Device);
+			string Namespace = "", Group = "", Command = "", Node = "", Device = "";
+            DecodeTopic( t, ref Namespace, ref Group, ref Command, ref Node, ref Device);
 
 			// Checks
 			if (Namespace != DBChannel.NamespaceName)
@@ -449,7 +457,8 @@ namespace DriverSparkplugB
 				LogAndEvent("Wrong namespace");
 				return;
 			}
-			if (GroupId != DBChannel.GroupId)
+
+			if (!string.IsNullOrEmpty(DBChannel.GroupId) && (Group != DBChannel.GroupId))
 			{
 				LogAndEvent("Wrong Group Id");
 				return;
@@ -467,22 +476,22 @@ namespace DriverSparkplugB
                 switch (Command)
                 {
                     case "NDEATH":
-                        ProcessInLwt( Node, e.Message);
+                        ProcessInLwt(Group, Node, e.Message);
                         break;
                     case "NBIRTH":
-                        ProcessInStatus( Node, e.Message);
+                        ProcessInStatus(Group, Node, e.Message);
                         break;
 					case "NDATA":
-						ProcessInData(Node, e.Message);
+						ProcessInData(Group, Node, e.Message);
 						break;
 					case "DDEATH":
-						ProcessInLwt(Node + "/" + Device, e.Message);
+						ProcessInLwt(Group, Node + "/" + Device, e.Message);
 						break;
 					case "DBIRTH":
-						ProcessInStatus(Node + "/" + Device, e.Message);
+						ProcessInStatus(Group, Node + "/" + Device, e.Message);
 						break;
 					case "DDATA":
-						ProcessInData(Node + "/" + Device, e.Message);
+						ProcessInData(Group, Node + "/" + Device, e.Message);
 						break;
 
 					default:
@@ -518,7 +527,7 @@ namespace DriverSparkplugB
 			}
         }
 
-        private void ProcessInLwt( string NodeDeviceId, byte [] data)
+        private void ProcessInLwt(string GroupId, string NodeDeviceId, byte [] data)
         {
             Log("ProcessInLwt");
 			// A device has disconnected. 
@@ -533,7 +542,7 @@ namespace DriverSparkplugB
 			// We will process a payload if present and send any bdSeq and seq to the server
 
             DrvCSScanner FD;
-            if (DeviceIndex.TryGetValue(NodeDeviceId, out FD))
+            if (DeviceIndex.TryGetValue(GroupId + "/" + NodeDeviceId, out FD))
             {
 				// Interpret ProtoBuf
 				Int16 seqNo = 0;
@@ -557,7 +566,7 @@ namespace DriverSparkplugB
 				}
 				catch (Exception e)
 				{
-					LogAndEvent("Error interpreting Death message for: " + NodeDeviceId + " " + e.Message);
+					LogAndEvent("Error interpreting Death message for: " + GroupId + "/" + NodeDeviceId + " " + e.Message);
 				}
 
 				App.SendReceiveObject(FD.DBScanner.Id, OPCProperty.SendRecRaiseScannerAlarm, data);
@@ -568,12 +577,12 @@ namespace DriverSparkplugB
             else
             {
                 // Unknown device disconnecting, just log to file
-                LogAndEvent("Received LWT for unknown device: " + NodeDeviceId);
+                LogAndEvent("Received LWT for unknown device: " + GroupId + "/" + NodeDeviceId);
             }
         }
 
 		// Incoming Birth Cert
-        private void ProcessInStatus(string NodeDeviceId, byte[] data)
+        private void ProcessInStatus(string GroupId, string NodeDeviceId, byte[] data)
         {
             Log("ProcessInStatus");
             DrvCSScanner FD;
@@ -594,22 +603,22 @@ namespace DriverSparkplugB
 			}
 			catch (Exception e)
             {
-                if (DeviceIndex.TryGetValue(NodeDeviceId, out FD))
+                if (DeviceIndex.TryGetValue(GroupId + "/" + NodeDeviceId, out FD))
                 {
-                    App.SendReceiveObject(FD.DBScanner.Id, OPCProperty.SendRecFDProtocolError, "Error interpreting Birth message for known: " + NodeDeviceId + " " + e.Message);
+                    App.SendReceiveObject(FD.DBScanner.Id, OPCProperty.SendRecFDProtocolError, "Error interpreting Birth message for known: " + GroupId + "/" + NodeDeviceId + " " + e.Message);
                     return;
                 }
                 else
                 {
                     // Invalid JSON for a new device
-                    App.SendReceiveObject(this.DBChannel.Id, OPCProperty.SendRecReportConfigError, "Failed to interpret Birth message for unknown: " + NodeDeviceId + " " + e.Message);
+                    App.SendReceiveObject(this.DBChannel.Id, OPCProperty.SendRecReportConfigError, "Failed to interpret Birth message for unknown: " + GroupId + "/" + NodeDeviceId + " " + e.Message);
                     return;
                 }
             }
-			LogAndEvent("Birth: " + NodeDeviceId + ", Timestamp: " + ConfigPayload.Timestamp.ToString() + " Sequence: " + ConfigPayload.Seq.ToString());
+			LogAndEvent("Birth: " + GroupId + "/" + NodeDeviceId + ", Timestamp: " + ConfigPayload.Timestamp.ToString() + " Sequence: " + ConfigPayload.Seq.ToString());
 			
             // A device has connected
-            if (DeviceIndex.TryGetValue( NodeDeviceId, out FD))
+            if (DeviceIndex.TryGetValue(GroupId + "/" + NodeDeviceId, out FD))
             {
 				// Got the birth message for a previously known device
 
@@ -641,7 +650,7 @@ namespace DriverSparkplugB
 					LogAndEvent("Removing earlier data from data buffer.");
 					dataBuf.Remove(NodeDeviceId);
 				}
-				dataBuf.Add( NodeDeviceId, ConfigPayload);
+				dataBuf.Add(NodeDeviceId, ConfigPayload);
 
 				// Finally reset the sequence numbers
 				FD.rx_seq = (Int16)ConfigPayload.Seq;
@@ -659,7 +668,7 @@ namespace DriverSparkplugB
                     thisItem = new configItem(NodeDeviceId, ConfigPayload);
                     configBuf.Add( NodeDeviceId, thisItem);
                 }
-				CheckReadyInitiateConfig(NodeDeviceId, thisItem);
+				CheckReadyInitiateConfig(GroupId, NodeDeviceId, thisItem);
 			}
         }
 
@@ -680,7 +689,7 @@ namespace DriverSparkplugB
 			}
 		}
 
-		private void CheckReadyInitiateConfig(string NodeDeviceId, configItem thisItem)
+		private void CheckReadyInitiateConfig(string GroupId, string NodeDeviceId, configItem thisItem)
         {
             // Do we have all 3 properties? Only check when Config is received.
             if (thisItem.ready())
@@ -692,15 +701,15 @@ namespace DriverSparkplugB
                     // Send request to configure. Ends up calling a method with the arguments in this driver exe.
                     LogAndEvent("Request configuration action within driver.");
                     string ErrorText;
-                    if (CreateFieldDevice(NodeDeviceId, out ErrorText))
+                    if (CreateFieldDevice(GroupId, NodeDeviceId, out ErrorText))
                     {
-                        LogAndEvent("Success creating: " + NodeDeviceId );
+                        LogAndEvent("Success creating: " + GroupId + "/" + NodeDeviceId);
                     }
                     else
                     {
-                        LogAndEvent("Failed to create: " + NodeDeviceId + " " + ErrorText);
+                        LogAndEvent("Failed to create: " + GroupId + "/" + NodeDeviceId + " " + ErrorText);
                         // Should send receive to raise alarm.
-                        App.SendReceiveObject(this.DBChannel.Id, OPCProperty.SendRecReportConfigError, "Failed to create FD: " + NodeDeviceId + " " + ErrorText);
+                        App.SendReceiveObject(this.DBChannel.Id, OPCProperty.SendRecReportConfigError, "Failed to create FD: " + GroupId + "/" + NodeDeviceId + " " + ErrorText);
                     }
                     // Remove from queue
                     configBuf.Remove(NodeDeviceId);
@@ -708,8 +717,8 @@ namespace DriverSparkplugB
                 else
                 {
                     // Send request to alert user of config need. Ends up calling same CreateFieldDevice method as above
-                    LogAndEvent("Request configuration request alarm for: " + NodeDeviceId );
-                    App.SendReceiveObject(this.DBChannel.Id, OPCProperty.SendRecRequestConfiguration, NodeDeviceId);
+                    LogAndEvent("Request configuration request alarm for: " + GroupId + "/" + NodeDeviceId);
+                    App.SendReceiveObject(this.DBChannel.Id, OPCProperty.SendRecRequestConfiguration, GroupId + "/" + NodeDeviceId);
                 }
                 // Update servers list of items waiting for config.
                 RefreshPendingQueue();
@@ -717,11 +726,11 @@ namespace DriverSparkplugB
         }
 
 
-        private void ProcessInData(string NodeDeviceId, byte[] data)
+        private void ProcessInData(string GroupId, string NodeDeviceId, byte[] data)
         {
             LogAndEvent("ProcessInData");
             DrvCSScanner FD;
-            if (DeviceIndex.TryGetValue(NodeDeviceId, out FD))
+            if (DeviceIndex.TryGetValue(GroupId + "/" + NodeDeviceId, out FD))
             {
 				// Interpret ProtoBuf
 				Payload DataPayload;
@@ -772,20 +781,22 @@ namespace DriverSparkplugB
 			{
 				case OPCProperty.DriverActionInitiateConfig:
 					{
-						// Configure a device with this uuid
-						string NodeDeviceId = (string)Transaction.get_Args(0);
-						string ErrorText;
-						if (CreateFieldDevice(NodeDeviceId, out ErrorText))
+                        // Configure a device with this uuid
+                        string NodeReference = (string)Transaction.get_Args(0);
+						string GroupId = NodeReference.Substring(0, NodeReference.IndexOf('/'));
+						string NodeDeviceId = NodeReference.Substring(NodeReference.IndexOf('/') + 1);
+                        string ErrorText;
+						if (CreateFieldDevice(GroupId, NodeDeviceId, out ErrorText))
 						{
-							this.CompleteTransaction(Transaction, 0, "Successfully created device: " + NodeDeviceId);
+							this.CompleteTransaction(Transaction, 0, "Successfully created device: " + GroupId + "/" + NodeDeviceId);
 						}
 						else
 						{
-							LogAndEvent("Failed to create: " + NodeDeviceId + " " + ErrorText);
+							LogAndEvent("Failed to create: " + GroupId + "/" + NodeDeviceId + " " + ErrorText);
 							// Should send receive to raise alarm.
-							App.SendReceiveObject(this.DBChannel.Id, OPCProperty.SendRecReportConfigError, "Failed to create: " + NodeDeviceId + " " + ErrorText);
+							App.SendReceiveObject(this.DBChannel.Id, OPCProperty.SendRecReportConfigError, "Failed to create: " + GroupId + "/" + NodeDeviceId + " " + ErrorText);
 
-							this.CompleteTransaction(Transaction, 0, "Failed to create device: " + NodeDeviceId + " " + ErrorText);
+							this.CompleteTransaction(Transaction, 0, "Failed to create device: " + GroupId + "/" + NodeDeviceId + " " + ErrorText);
 						}
 					}
 					break;
@@ -840,7 +851,7 @@ namespace DriverSparkplugB
 			return ReconfigureDeviceAndChildren( jc, FieldDevice, ParentGroup, connection, AdvConnection, out ErrorText);
 		}
 
-		public bool CreateFieldDevice(string NodeDeviceId, out string ErrorText)
+		public bool CreateFieldDevice(string GroupId, string NodeDeviceId, out string ErrorText)
 		{
 			// Need to connect to the database as a client
 			ClearScada.Client.Simple.Connection connection;
@@ -858,7 +869,7 @@ namespace DriverSparkplugB
 				return false;
 			}
 
-			bool status =  CreateFieldDeviceObjects(NodeDeviceId, thisItem.birthData, connection, AdvConnection, out ErrorText);
+			bool status =  CreateFieldDeviceObjects(GroupId, NodeDeviceId, thisItem.birthData, connection, AdvConnection, out ErrorText);
 			// Should disconnect everywhere it goes wrong too!!
 			DisconnectNet(connection, AdvConnection);
 
@@ -905,7 +916,8 @@ namespace DriverSparkplugB
 			return result;
 		}
 
-		public bool CreateFieldDeviceObjects(	string NodeDeviceId, 
+		public bool CreateFieldDeviceObjects(	string GroupId,
+												string NodeDeviceId, 
 												Payload birthData,
 												ClearScada.Client.Simple.Connection connection, 
 												ClearScada.Client.Advanced.IServer AdvConnection, 
@@ -921,7 +933,8 @@ namespace DriverSparkplugB
 				DeviceId = NodeDeviceParts[1];
 			}
 			// SCADA object names may not contain invalid chars
-			string GSNodeId = Sp2GSname(NodeId);
+			string GSGroupId = Sp2GSname(GroupId);
+            string GSNodeId = Sp2GSname(NodeId);
 			string GSDeviceId = Sp2GSname(DeviceId);
 			string GSNodeDeviceId = GSNodeId + ((GSDeviceId== "") ? "" : "." + GSDeviceId);
 
@@ -935,23 +948,23 @@ namespace DriverSparkplugB
 			// Check does not exist
 			// Need to query all devices on this channel by ENodeId
 			// Enclose scope so the same names can be used
-			string sql = "SELECT Id, Fullname FROM SparkplugBND WHERE ChannelId = " + DBChannel.Id.ToString() + 
-							" AND NodeDevice = '" + NodeDeviceId + "'";
+			string sql = "SELECT Id, Fullname FROM SparkplugBND WHERE ChannelId = " + DBChannel.Id.ToString() +
+                            "AND NodeGroup = '" + GroupId + "' AND NodeDevice = '" + NodeDeviceId + "'";
 			if ( QueryDatabaseForId(AdvConnection, sql) > 0)
 			{ 
-				ErrorText = ("A device with this Node/Device Id exists: " + NodeDeviceId);
+				ErrorText = ("A device with this Group and Node/Device Id exists: " + GroupId + "/" + NodeDeviceId);
 				return false;
 			}
 			else
 			{
-				LogAndEvent("No existing device found - proceeding to create: " + NodeDeviceId);
+				LogAndEvent("No existing device found - proceeding to create: " + GroupId + "/" + NodeDeviceId);
 			}
 
 			// Find Node reference if this is a device - creating a Device will assume a Node already exists, if not we have to create one
-			if ( NodeDeviceId.Contains( "/") )
+			if (NodeDeviceId.Contains( "/"))
 			{
 				sql = "SELECT id, Fullname, NodeDevice FROM SparkplugBND WHERE ChannelId = " + DBChannel.Id.ToString() +
-							" AND NodeDevice = '" + NodeId + "'";
+                            "AND NodeGroup = '" + GroupId + "' AND NodeDevice = '" + NodeId + "'";
 
 				ParentNodeId = QueryDatabaseForId( AdvConnection, sql);
 
@@ -962,7 +975,7 @@ namespace DriverSparkplugB
 					// No, so must be instance Node - do this recursively with the NodeId and an empty payload
 					Payload EmptyParent = new Payload();
 					EmptyParent.Timestamp = birthData.Timestamp;
-					if ( !CreateFieldDeviceObjects( NodeId, EmptyParent, connection, AdvConnection, out ErrorText))
+					if ( !CreateFieldDeviceObjects( GroupId, NodeId, EmptyParent, connection, AdvConnection, out ErrorText))
 					{
 						ErrorText += " (creating empty parent Node)";
 						return false;
@@ -970,7 +983,7 @@ namespace DriverSparkplugB
 					// Code below needs the Id of the newly created parent.
 					// Find the database reference of the Node
 					sql = "SELECT id, Fullname, NodeDevice FROM SparkplugBND WHERE ChannelId = " + DBChannel.Id.ToString() +
-									" AND NodeDevice = '" + NodeId + "'";
+                                    "AND NodeGroup = '" + GroupId + "' AND NodeDevice = '" + NodeId + "'";
 
 					ParentNodeId = QueryDatabaseForId(AdvConnection, sql);
 
@@ -991,7 +1004,7 @@ namespace DriverSparkplugB
 			//                                or <ConfigGroupId>.<NodeId>.<DeviceId>.Device
 
 			// Could also filter other invalid characters. Used for devices too, if no template.
-			LogAndEvent("Configure device: " + NodeDeviceId + " as " + GSNodeDeviceId);
+			LogAndEvent("Configure device: " + GroupId + "/" + NodeDeviceId + " as " + GSGroupId + "." + GSNodeDeviceId);
 
 			// Group to contain instances or field device object groups
 			ClearScada.Client.Simple.DBObject InstanceGroup;
@@ -1011,25 +1024,59 @@ namespace DriverSparkplugB
 				return false;
 			}
 
-			// If this is a Device, then try to get the Node
-			// Group will commonly be named <chosen node group>.<node name> - Which is InstanceGroup.GetChild(GSNodeId);
-			// But user could have moved items, so better to use:
-			// <group the node object belongs to = ParentNodeId.Parent.FullName>
-			ClearScada.Client.Simple.DBObject NodeGroup = null;
+            ClearScada.Client.Simple.DBObject GroupGroup;
+            try
+            {
+                GroupGroup = InstanceGroup.GetChild(GSGroupId);
+            }
+            catch (Exception e)
+            {
+                ErrorText = "Error finding group: " + GSGroupId + ", " + e.Message;
+                return false;
+            }
+            if (GroupGroup == null)
+            {
+                try
+                {
+                    // Create group
+                    GroupGroup = InstanceGroup.CreateObject("CGroup", GSGroupId);
+                }
+                catch (Exception e)
+                {
+                    ErrorText = "Error creating group: " + GSGroupId + ", " + e.Message;
+                    return false;
+                }
+            }
+
+            // If this is a Device, then try to get the Node
+            // Group will commonly be named <chosen node group>.<node name> - Which is InstanceGroup.GetChild(GSNodeId);
+            // But user could have moved items, so better to use:
+            // <group the node object belongs to = ParentNodeId.Parent.FullName>
+            ClearScada.Client.Simple.DBObject NodeGroup = null;
 			if (GSDeviceId != "")
 			{
-				try
-				{
-					ObjectId ParentNodeObjectId = new ObjectId(ParentNodeId);
-					ClearScada.Client.Simple.DBObject ParentNodeObject = connection.GetObject(ParentNodeObjectId);
-					NodeGroup = ParentNodeObject.Parent; 
-					LogAndEvent("Node group. " + NodeGroup.FullName);
-				}
-				catch
-				{
-					ErrorText = ("Cannot find device group.");
-					return false;
-				}
+                try
+                {
+                    NodeGroup = GroupGroup.GetChild(GSNodeId);
+                }
+                catch (Exception e)
+                {
+                    ErrorText = "Error finding group: " + GSNodeId + ", " + e.Message;
+                    return false;
+                }
+                if (NodeGroup == null)
+                {
+                    try
+                    {
+                        // Create node group
+                        NodeGroup = GroupGroup.CreateObject("CGroup", GSNodeId);
+                    }
+                    catch (Exception e)
+                    {
+                        ErrorText = "Error creating group: " + GSNodeId + ", " + e.Message;
+                        return false;
+                    }
+                }
 			}
 
 			// Read the template information from the channel
@@ -1085,7 +1132,7 @@ namespace DriverSparkplugB
 					// Create instance of node/device template
 					if (GSDeviceId == "")
 					{
-						Instance = connection.CreateInstance(CSTemplateId, InstanceGroup.Id, GSNodeId);
+						Instance = connection.CreateInstance(CSTemplateId, GroupGroup.Id, GSNodeId);
 					}
 					else
 					{
@@ -1125,23 +1172,57 @@ namespace DriverSparkplugB
 				// Not an instance, but using that object ref
 				// In the case of a Device, we need device group in node group
 				LogAndEvent("Create group directly.");
-				try
+				if (GSDeviceId == "")
 				{
-					if (GSDeviceId == "")
+					try
 					{
-						Instance = connection.CreateObject("CGroup", InstanceGroup.Id, GSNodeId);
+						Instance = GroupGroup.GetChild(GSNodeId);
 					}
-					else
+					catch (Exception e)
 					{
-						Instance = connection.CreateObject("CGroup", NodeGroup.Id, GSDeviceId);
+						ErrorText = "Error finding group: " + GSNodeId + ", " + e.Message;
+						return false;
+					}
+					if (Instance == null)
+					{
+						try
+						{
+							// Create node group
+							Instance = GroupGroup.CreateObject("CGroup", GSNodeId);
+						}
+						catch (Exception e)
+						{
+							ErrorText = "Error creating group: " + GSNodeId + ", " + e.Message;
+							return false;
+						}
 					}
 				}
-				catch (Exception Failure)
+				else
 				{
-					// Possible to consider continuing here, keep this group and add FD to it.
-					ErrorText = "Group already exists - cannot create field device. " + Failure.Message;
-					return false;
+					try
+					{
+						Instance = NodeGroup.GetChild(GSDeviceId);
+					}
+					catch (Exception e)
+					{
+						ErrorText = "Error finding group: " + GSDeviceId + ", " + e.Message;
+						return false;
+					}
+					if (Instance == null)
+					{
+						try
+						{
+							// Create device group
+							Instance = NodeGroup.CreateObject("CGroup", GSDeviceId);
+						}
+						catch (Exception e)
+						{
+							ErrorText = "Error creating group: " + GSDeviceId + ", " + e.Message;
+							return false;
+						}
+					}
 				}
+
 				// Create field device
 				try
 				{
@@ -1158,16 +1239,22 @@ namespace DriverSparkplugB
 				}
 				catch (Exception Failure)
 				{
-					ErrorText = "Field Device already exists. " + Failure.Message;
+					ErrorText = "Field Device " + GSGroupId + "." + GSNodeDeviceId + " already exists. " + Failure.Message;
 					return false;
 				}
 			}
-			// Creating Field Device etc.
+            // Creating Field Device etc.
 
-			// Set field device properties
-			// ChannelId - ignore if set already - may be already set appropriately in the template
+            // Set field device properties
+            // ChannelId - ignore if set already - may be already set appropriately in the template
 
-			if (! CheckSet( FieldDevice, "ENodeId", NodeId))
+            if (!CheckSet(FieldDevice, "GroupId", GroupId))
+            {
+                ErrorText = "Error writing device GroupId.";
+                return false;
+            }
+
+            if (!CheckSet( FieldDevice, "ENodeId", NodeId))
 			{
 				ErrorText = "Error writing device ENodeId.";
 				return false;
@@ -2262,7 +2349,7 @@ namespace DriverSparkplugB
 			// Get value based on type of control value
 			switch (SPtype)
 			{
-				case 1:	// Int8
+				case 1: // Int8
 				case 2: // Int16
 				case 3: // Int32
 				case 5: // UInt8
@@ -2302,6 +2389,7 @@ namespace DriverSparkplugB
 			LogAndEvent("Control message formed");
 
 			// Control topic data
+			string Group = this.DBScanner.NodeGroup;
 			string NodeDev = this.DBScanner.NodeDevice;
 			string MessageType = "NCMD";
 			if (this.DBScanner.DeviceId != "")
@@ -2312,7 +2400,7 @@ namespace DriverSparkplugB
 			DrvSparkplugBBroker broker = (DrvSparkplugBBroker)Channel;
 
 			string TopicName = broker.DBChannel.NamespaceName + "/" +
-								broker.DBChannel.GroupId + "/" +
+                                Group + "/" +
 								MessageType + "/" +
 								NodeDev;
 			byte[] bytes;
