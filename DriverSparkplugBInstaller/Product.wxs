@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:netfx="http://schemas.microsoft.com/wix/NetFxExtension">
-  <Product Id="32d4ad2d-ff74-45c5-b7f7-475f0dd88a31" Name="Sparkplug B Driver" Language="1033" Version="1.0.0.0" 
+  <Product Id="32d4ad2d-ff74-45c5-b7f7-475f0dd88a31" Name="Sparkplug B Driver" Language="1033" Version="1.0.0.1" 
             Manufacturer="Schneider Electric" UpgradeCode="75ddcd57-1f62-ff15-9c92-ec69ae80ab5a">
     <Package InstallerVersion="200" Compressed="yes" InstallPrivileges="elevated" InstallScope="perMachine" Platform="x64" />
     <MajorUpgrade DowngradeErrorMessage="A newer or same version of Sparkplug B Driver is already installed." />
