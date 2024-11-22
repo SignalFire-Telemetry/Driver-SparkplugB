@@ -257,9 +257,9 @@ namespace DriverSparkplugB
         public void AddScannerToIndex(DrvCSScanner s)
         {
             // Check if channel already contains scanner before adding
-            if (DeviceIndex.ContainsKey((string)s.DBScanner.NodeDevice) == false)
+            if (DeviceIndex.ContainsKey(s.DBScanner.NodeGroup + "/" + s.DBScanner.NodeDevice) == false)
             {
-                DeviceIndex.Add(s.DBScanner.NodeDevice, s);
+                DeviceIndex.Add(s.DBScanner.NodeGroup + "/" + s.DBScanner.NodeDevice, s);
                 LogAndEvent("Add to Device Dictionary: " + DeviceIndex.Count);
             }
             else
@@ -270,9 +270,9 @@ namespace DriverSparkplugB
 
         public void RemoveScannerFromIndex(DrvCSScanner s)
         {
-            if (DeviceIndex.ContainsKey((string)s.DBScanner.NodeDevice) == true)
+            if (DeviceIndex.ContainsKey(s.DBScanner.NodeGroup + "/" + s.DBScanner.NodeDevice) == true)
             {
-                DeviceIndex.Remove(s.DBScanner.NodeDevice);
+                DeviceIndex.Remove(s.DBScanner.NodeGroup + "/" + s.DBScanner.NodeDevice);
 				LogAndEvent("Removed from Device Dictionary: " + DeviceIndex.Count);
             }
             else
@@ -311,7 +311,7 @@ namespace DriverSparkplugB
 						}
 						try
 						{
-							if (c.clientCertFile == null)
+							if (!string.IsNullOrEmpty(c.clientCertFile))
 							{
 								if (c.clientCertFormat == 0) // DER
 								{
@@ -660,12 +660,12 @@ namespace DriverSparkplugB
 				}
 				// Birth messages can contain data, so buffered the payload from the Birth message
 				// This will get picked up in the device's OnScan method.
-				if (dataBuf.ContainsKey(NodeDeviceId))
+				if (dataBuf.ContainsKey(GroupId + "/" + NodeDeviceId))
 				{
 					LogAndEvent("Removing earlier data from data buffer.");
-					dataBuf.Remove(NodeDeviceId);
+					dataBuf.Remove(GroupId + "/" + NodeDeviceId);
 				}
-				dataBuf.Add(NodeDeviceId, ConfigPayload);
+				dataBuf.Add(GroupId + "/" + NodeDeviceId, ConfigPayload);
 
 				// Finally reset the sequence numbers
 				FD.rx_seq = (Int16)ConfigPayload.Seq;
@@ -677,11 +677,11 @@ namespace DriverSparkplugB
                 // Brand new device - not seen. 
                 LogAndEvent("Device not in database.");
                 configItem thisItem;
-                if (!configBuf.TryGetValue( NodeDeviceId, out thisItem))
+                if (!configBuf.TryGetValue(GroupId + "/" + NodeDeviceId, out thisItem))
                 {
                     LogAndEvent("Device not buffered, adding to memory.");
-                    thisItem = new configItem(NodeDeviceId, ConfigPayload);
-                    configBuf.Add( NodeDeviceId, thisItem);
+                    thisItem = new configItem(GroupId + "/" + NodeDeviceId, ConfigPayload);
+                    configBuf.Add(GroupId + "/" + NodeDeviceId, thisItem);
                 }
 				CheckReadyInitiateConfig(GroupId, NodeDeviceId, thisItem);
 			}
@@ -727,7 +727,7 @@ namespace DriverSparkplugB
                         App.SendReceiveObject(this.DBChannel.Id, OPCProperty.SendRecReportConfigError, "Failed to create FD: " + GroupId + "/" + NodeDeviceId + " " + ErrorText);
                     }
                     // Remove from queue
-                    configBuf.Remove(NodeDeviceId);
+                    configBuf.Remove(GroupId + "/" + NodeDeviceId);
                 }
                 else
                 {
@@ -784,7 +784,7 @@ namespace DriverSparkplugB
             }
             else
             {
-                LogAndEvent("Cannot find device for this Data. " + NodeDeviceId);
+                LogAndEvent("Cannot find device for this Data: " + GroupId + "/" + NodeDeviceId);
             }
         }
 
@@ -878,7 +878,7 @@ namespace DriverSparkplugB
 			}
 
 			configItem thisItem;
-			if (!configBuf.TryGetValue(NodeDeviceId, out thisItem))
+			if (!configBuf.TryGetValue(GroupId + "/" + NodeDeviceId, out thisItem))
 			{
 				ErrorText = ("Cannot find device config message in configuration buffer.");
 				return false;
@@ -890,15 +890,15 @@ namespace DriverSparkplugB
 
 			// There may be data in the metrics, so buffer this for processing after device creation
 			// (OnDefine needs to have been called).
-			if (dataBuf.ContainsKey( NodeDeviceId))
+			if (dataBuf.ContainsKey(GroupId + "/" + NodeDeviceId))
 			{
 				LogAndEvent("Removing earlier data from data buffer");
-				dataBuf.Remove(NodeDeviceId);
+				dataBuf.Remove(GroupId + "/" + NodeDeviceId);
 			}
-			dataBuf.Add(NodeDeviceId, thisItem.birthData);
+			dataBuf.Add(GroupId + "/" + NodeDeviceId, thisItem.birthData);
 			LogAndEvent("Add to data buffer");
 			// Finish by remove 
-			configBuf.Remove(NodeDeviceId);
+			configBuf.Remove(GroupId + "/" + NodeDeviceId);
 			LogAndEvent("Removed from config buffer");
 			RefreshPendingQueue();
 			LogAndEvent("Config buffer refreshed.");
@@ -2322,6 +2322,10 @@ namespace DriverSparkplugB
 			{
                 ControlAnalogue(Point, Value, QoS);
             }
+			else if (Point.PointType.Name == "SparkplugBPointSt")
+			{
+                ControlString(Point, Value, QoS);
+            }
 			else
 			{
                 throw new Exception("No handler found for " + Point.FullName);
@@ -2344,6 +2348,16 @@ namespace DriverSparkplugB
 			uint SPtype = (uint)((SparkplugBPointAg)entry.DatabaseObject).SPtype;
 			string SPname = ((SparkplugBPointAg)entry.DatabaseObject).SparkplugName;
 			ulong Alias = (ulong)((SparkplugBPointAg)entry.DatabaseObject).Address;
+
+			SendControlMessage(val, SPtype, SPname, Alias, QoS);
+		}
+
+		private void ControlString(PointSourceEntry entry, object val, byte QoS)
+		{
+			SparkplugBPointSt point = (SparkplugBPointSt)(entry.DatabaseObject);
+			uint SPtype = (uint)((SparkplugBPointSt)entry.DatabaseObject).SPtype;
+			string SPname = ((SparkplugBPointSt)entry.DatabaseObject).SparkplugName;
+			ulong Alias = (ulong)((SparkplugBPointSt)entry.DatabaseObject).Address;
 
 			SendControlMessage(val, SPtype, SPname, Alias, QoS);
 		}
