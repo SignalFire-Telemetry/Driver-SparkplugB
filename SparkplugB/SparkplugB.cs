@@ -287,10 +287,6 @@ namespace SparkplugB
 
         public override void OnValidateConfig(MessageInfo Errors)
         {
-			if (GroupId == "")
-			{
-				Errors.Add(this, "GroupId", "GroupId is blank.");
-			}
             base.OnValidateConfig(Errors);
         }
 
@@ -419,6 +415,12 @@ namespace SparkplugB
         [ConfigField("Channel", "Broker Reference", 3, 2, 0x03505041)]
         public Reference<SparkplugBBroker> ChannelId;
 
+        [Label("Group Id", 3, 3)]
+        [ConfigField("GroupId",
+             "The Group Identification.",
+             3, 4, OPCProperty.Base + 94, Length = 20, AlwaysOverride = true)]
+        public string GroupId;
+
         [Label("Edge Node Id", 4, 1)]
         [ConfigField("ENodeId",
                      "The Edge Node Identification.",
@@ -446,8 +448,19 @@ namespace SparkplugB
             get { return AOIRef.Name; }
         }
 
-		// Data Fields here
-		[DataField("Node Device Name",
+        // Data Fields here
+        [DataField("Node Group Name",
+				   "Node Group Id string",
+				   OPCProperty.Base + 9)]
+		public String NodeGroup
+		{
+			get
+			{
+				return GroupId;
+			}
+		}
+
+        [DataField("Node Device Name",
 				   "Node Id / Device Id as one string",
 				   OPCProperty.Base + 8)]
 		public String NodeDevice
@@ -547,6 +560,10 @@ namespace SparkplugB
 			if (!IsTemplate())
 			{
 				// ToDo - e.g. check ENodeId and DeviceId do not contain /, + or #
+				if (GroupId == "")
+				{
+					Errors.Add(this, "GroupId", "Group name must not be blank.");
+				}
 				if (ENodeId == "")
 				{
 					Errors.Add(this, "ENodeId", "Edge Node name must not be blank.");
